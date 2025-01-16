@@ -8,6 +8,10 @@ import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.Spinner;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -33,14 +37,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
-public class UserManagementActivity extends AppCompatActivity {
+public class
+UserManagementActivity extends AppCompatActivity {
 
-    private EditText newUserEmail, newUserPassword, newUserMobile, searchUser;
+    private EditText newUserEmail, newUserPassword, newUserMobile, newUserLegalName, searchUser;
     private AutoCompleteTextView newUserAddress;
+    private Spinner pronounsSpinner;
+    private RadioGroup genderGroup;
     private Button addUserButton;
     private RecyclerView userRecyclerView;
     private UserAdapter userAdapter;
     private List<User> userList;
+    private ImageView backButton;
 
     private FirebaseAuth auth;
     private DatabaseReference usersRef;
@@ -52,8 +60,10 @@ public class UserManagementActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_user_management);
+
         auth = FirebaseAuth.getInstance();
         usersRef = FirebaseDatabase.getInstance().getReference("users");
+
         if (!Places.isInitialized()) {
             Places.initialize(getApplicationContext(), "AIzaSyCQsIJqnQs7sbv6gr-LT1amFavJoPFvCpQ");
         }
@@ -62,41 +72,60 @@ public class UserManagementActivity extends AppCompatActivity {
         newUserEmail = findViewById(R.id.newUserEmail);
         newUserPassword = findViewById(R.id.newUserPassword);
         newUserMobile = findViewById(R.id.newUserMobile);
+        newUserLegalName = findViewById(R.id.newUserLegalName);
         newUserAddress = findViewById(R.id.newUserAddress);
+        pronounsSpinner = findViewById(R.id.pronounsSpinner);
+        genderGroup = findViewById(R.id.genderGroup);
         addUserButton = findViewById(R.id.addUserButton);
         searchUser = findViewById(R.id.searchUser);
         userRecyclerView = findViewById(R.id.userRecyclerView);
+        backButton = findViewById(R.id.back_button);
 
         userRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         userList = new ArrayList<>();
         userAdapter = new UserAdapter(userList, usersRef);
         userRecyclerView.setAdapter(userAdapter);
 
-        addressSuggestions = new ArrayList<>();
+        ArrayAdapter<String> pronounsAdapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_item,
+                new String[]{"She/Her/Hers", "He/Him/His"}
+        );
+        pronounsAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        pronounsSpinner.setAdapter(pronounsAdapter);
 
-        // Set address suggestions
+        addressSuggestions = new ArrayList<>();
         newUserAddress.addTextChangedListener(new TextWatcher() {
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (s.length() > 2) { // Trigger suggestions after 3 characters
+                if (s.length() > 2) {
                     fetchAddressSuggestions(s.toString());
                 }
             }
 
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
 
             @Override
-            public void afterTextChanged(Editable s) {}
+            public void afterTextChanged(Editable s) {
+            }
         });
+        backButton.setOnClickListener(v -> onBackPressed());
 
         addUserButton.setOnClickListener(v -> {
             String email = newUserEmail.getText().toString().trim();
             String password = newUserPassword.getText().toString().trim();
             String mobile = newUserMobile.getText().toString().trim();
             String address = newUserAddress.getText().toString().trim();
-            if (validateInput(email, password, mobile, address)) {
-                addUser(email, password, mobile, address);
+            String legalName = newUserLegalName.getText().toString().trim();
+            String pronouns = pronounsSpinner.getSelectedItem().toString();
+            int genderId = genderGroup.getCheckedRadioButtonId();
+            RadioButton genderButton = findViewById(genderId);
+            String gender = genderButton == null ? "" : genderButton.getText().toString();
+
+            if (validateInput(email, password, mobile, address, legalName, gender)) {
+                addUser(email, password, mobile, address, legalName, pronouns, gender);
             }
         });
 
@@ -107,74 +136,97 @@ public class UserManagementActivity extends AppCompatActivity {
             }
 
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
 
             @Override
-            public void afterTextChanged(Editable s) {}
+            public void afterTextChanged(Editable s) {
+            }
         });
 
         loadUsers();
     }
 
-    private void fetchAddressSuggestions(String query) {
-        AutocompleteSessionToken token = AutocompleteSessionToken.newInstance();
-        FindAutocompletePredictionsRequest request = FindAutocompletePredictionsRequest.builder()
-                .setSessionToken(token)
-                .setQuery(query)
-                .build();
-
-        placesClient.findAutocompletePredictions(request).addOnSuccessListener(response -> {
-            addressSuggestions.clear();
-            for (AutocompletePrediction prediction : response.getAutocompletePredictions()) {
-                addressSuggestions.add(prediction.getFullText(null).toString());
-            }
-            newUserAddress.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, addressSuggestions));
-        }).addOnFailureListener(e -> {
-            Toast.makeText(UserManagementActivity.this, "Error fetching address suggestions", Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    private boolean validateInput(String email, String password, String mobile, String address) {
-        if (TextUtils.isEmpty(email) || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
-            Toast.makeText(this, "Invalid email", Toast.LENGTH_SHORT).show();
+    private boolean validateInput(String email, String password, String mobile, String address, String legalName, String gender) {
+        if (TextUtils.isEmpty(email)) {
+            Toast.makeText(this, "Please enter a valid email", Toast.LENGTH_SHORT).show();
             return false;
         }
         if (TextUtils.isEmpty(password) || password.length() < 6) {
             Toast.makeText(this, "Password must be at least 6 characters", Toast.LENGTH_SHORT).show();
             return false;
         }
-        if (TextUtils.isEmpty(mobile) || !mobile.matches("\\d{10}")) {
-            Toast.makeText(this, "Invalid mobile number", Toast.LENGTH_SHORT).show();
+        if (TextUtils.isEmpty(mobile) || mobile.length() != 10 || !mobile.matches("\\d+")) {
+            Toast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
             return false;
         }
         if (TextUtils.isEmpty(address)) {
             Toast.makeText(this, "Address cannot be empty", Toast.LENGTH_SHORT).show();
             return false;
         }
+        if (TextUtils.isEmpty(legalName)) {
+            Toast.makeText(this, "Legal name cannot be empty", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+        if (TextUtils.isEmpty(gender)) {
+            Toast.makeText(this, "Please select a gender", Toast.LENGTH_SHORT).show();
+            return false;
+        }
         return true;
     }
 
-    private void addUser(final String email, final String password, final String mobile, final String address) {
+    private void addUser(String email, String password, String mobile, String address, String legalName, String pronouns, String gender) {
         auth.createUserWithEmailAndPassword(email, password)
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         String userId = task.getResult().getUser().getUid();
+                        String checkingAccountNumber = generateAccountNumber("CHK");
+                        String savingsAccountNumber = generateAccountNumber("SAV");
+
                         Map<String, Object> userData = new HashMap<>();
+                        userData.put("uid", userId);
                         userData.put("email", email);
+                        userData.put("password", password);
                         userData.put("mobile", mobile);
                         userData.put("address", address);
+                        userData.put("legalName", legalName);
+                        userData.put("pronouns", pronouns);
+                        userData.put("gender", gender);
+                        userData.put("checkingAccountNumber", checkingAccountNumber);
+                        userData.put("savingsAccountNumber", savingsAccountNumber);
+                        userData.put("checkingBalance", "0.00");
+                        userData.put("savingsBalance", "0.00");
+                        userData.put("isFirstLogin", true);
+                        userData.put("isActive", true);
+
                         usersRef.child(userId).setValue(userData)
                                 .addOnCompleteListener(task1 -> {
                                     if (task1.isSuccessful()) {
-                                        Toast.makeText(this, "User added successfully!", Toast.LENGTH_SHORT).show();
+                                        Toast.makeText(this, "User added successfully!", Toast.LENGTH_LONG).show();
+                                        clearFields();
                                     } else {
-                                        Toast.makeText(this, "Failed to add user", Toast.LENGTH_SHORT).show();
+                                        Toast.makeText(this, "Failed to add user data", Toast.LENGTH_SHORT).show();
                                     }
                                 });
                     } else {
-                        Toast.makeText(this, "Failed to create user", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "Failed to create user: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
                     }
                 });
+    }
+
+    private void clearFields() {
+        newUserEmail.setText("");
+        newUserPassword.setText("");
+        newUserMobile.setText("");
+        newUserLegalName.setText("");
+        newUserAddress.setText("");
+        pronounsSpinner.setSelection(0);
+        genderGroup.clearCheck();
+    }
+
+    private String generateAccountNumber(String prefix) {
+        int randomNum = 100000 + new Random().nextInt(900000);
+        return prefix + randomNum;
     }
 
     private void loadUsers() {
@@ -191,8 +243,26 @@ public class UserManagementActivity extends AppCompatActivity {
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                Toast.makeText(UserManagementActivity.this, "Error loading users", Toast.LENGTH_SHORT).show();
+                Toast.makeText(UserManagementActivity.this, "Failed to load users: " + error.getMessage(), Toast.LENGTH_SHORT).show();
             }
+        });
+    }
+
+    private void fetchAddressSuggestions(String query) {
+        AutocompleteSessionToken token = AutocompleteSessionToken.newInstance();
+        FindAutocompletePredictionsRequest request = FindAutocompletePredictionsRequest.builder()
+                .setSessionToken(token)
+                .setQuery(query)
+                .build();
+
+        placesClient.findAutocompletePredictions(request).addOnSuccessListener(response -> {
+            addressSuggestions.clear();
+            for (AutocompletePrediction prediction : response.getAutocompletePredictions()) {
+                addressSuggestions.add(prediction.getFullText(null).toString());
+            }
+            newUserAddress.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, addressSuggestions));
+        }).addOnFailureListener(e -> {
+            Toast.makeText(this, "Error fetching address suggestions", Toast.LENGTH_SHORT).show();
         });
     }
 }

@@ -31,8 +31,25 @@ public class MoreFragment extends Fragment {
         TextView profileText = view.findViewById(R.id.profile);
         profileText.setOnClickListener(v -> {
             Intent intent = new Intent(getActivity(), ProfileActivity.class);
+            intent.putExtra("USER_ID", FirebaseAuth.getInstance().getCurrentUser().getUid());
             startActivity(intent);
         });
+        TextView faqText = view.findViewById(R.id.faq);
+        faqText.setOnClickListener(v -> {
+            Intent intent = new Intent(getActivity(), FAQActivity.class);
+            startActivity(intent);
+        });
+        TextView contactText = view.findViewById(R.id.contact);
+        contactText.setOnClickListener(v -> {
+            Intent intent = new Intent(getActivity(), ContactUsActivity.class);
+            startActivity(intent);
+        });
+        TextView privacyText = view.findViewById(R.id.privacy);
+        privacyText.setOnClickListener(v -> {
+            Intent intent = new Intent(getActivity(), PrivacyLegalActivity.class);
+            startActivity(intent);
+        });
+
 
         TextView resetPasswordText = view.findViewById(R.id.resetPassword);
         resetPasswordText.setOnClickListener(v -> resetPassword());

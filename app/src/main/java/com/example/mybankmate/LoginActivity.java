@@ -1,5 +1,8 @@
 package com.example.mybankmate;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -8,9 +11,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -27,7 +27,7 @@ public class LoginActivity extends AppCompatActivity {
     private EditText emailField, passwordField;
     private Button loginButton;
     private FirebaseAuth auth;
-    private DatabaseReference usersRef, adminsRef;
+    private DatabaseReference adminsRef;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -35,7 +35,6 @@ public class LoginActivity extends AppCompatActivity {
         setContentView(R.layout.activity_login);
 
         auth = FirebaseAuth.getInstance();
-        usersRef = FirebaseDatabase.getInstance().getReference("users");
         adminsRef = FirebaseDatabase.getInstance().getReference("admins");
 
         emailField = findViewById(R.id.email);
@@ -50,26 +49,23 @@ public class LoginActivity extends AppCompatActivity {
             if (TextUtils.isEmpty(email) || TextUtils.isEmpty(password)) {
                 Toast.makeText(LoginActivity.this, "Please fill in all fields", Toast.LENGTH_SHORT).show();
             } else {
-                // Check for admin login first
-                authenticateAdmin(email, password);
+                checkIfAdmin(email, password);
             }
         });
 
         forgotPassword.setOnClickListener(v -> resetPassword());
     }
 
-    /**
-     * Authenticate an admin user.
-     */
-    private void authenticateAdmin(String email, String password) {
+    private void checkIfAdmin(String email, String password) {
+        Log.d(TAG, "Checking if admin: " + email);
+
         adminsRef.orderByChild("email").equalTo(email).addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                if (dataSnapshot.exists()) {
-                    for (DataSnapshot adminSnapshot : dataSnapshot.getChildren()) {
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                if (snapshot.exists()) {
+                    for (DataSnapshot adminSnapshot : snapshot.getChildren()) {
                         String storedPassword = adminSnapshot.child("password").getValue(String.class);
                         if (storedPassword != null && storedPassword.equals(password)) {
-                            // Admin login success
                             Log.d(TAG, "Admin login successful.");
                             Intent intent = new Intent(LoginActivity.this, AdminActivity.class);
                             startActivity(intent);
@@ -77,68 +73,77 @@ public class LoginActivity extends AppCompatActivity {
                             return;
                         }
                     }
+                    Toast.makeText(LoginActivity.this, "Invalid admin credentials", Toast.LENGTH_SHORT).show();
+                } else {
+                    Log.d(TAG, "Not an admin. Proceeding with user login...");
+                    loginUserWithFirebaseAuth(email, password);
                 }
-
-                // If not an admin, check as a regular user
-                Log.d(TAG, "Not an admin. Checking regular user login.");
-                authenticateRegularUser(email, password);
             }
 
             @Override
-            public void onCancelled(@NonNull DatabaseError databaseError) {
-                Log.e(TAG, "Admin authentication failed: " + databaseError.getMessage());
-                Toast.makeText(LoginActivity.this, "Database error: " + databaseError.getMessage(), Toast.LENGTH_SHORT).show();
+            public void onCancelled(@NonNull DatabaseError error) {
+                Log.e(TAG, "Admin check failed: " + error.getMessage());
+                Toast.makeText(LoginActivity.this, "Database error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-    /**
-     * Authenticate a regular user.
-     */
-    private void authenticateRegularUser(String email, String password) {
-        usersRef.orderByChild("email").equalTo(email).addListenerForSingleValueEvent(new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                if (dataSnapshot.exists()) {
-                    for (DataSnapshot userSnapshot : dataSnapshot.getChildren()) {
-                        String storedPassword = userSnapshot.child("password").getValue(String.class);
-                        Boolean isFirstLogin = userSnapshot.child("isFirstLogin").getValue(Boolean.class);
+    private void loginUserWithFirebaseAuth(String email, String password) {
+        Log.d(TAG, "Attempting user login with Firebase Authentication...");
 
-                        if (storedPassword != null && storedPassword.equals(password)) {
-                            // Check if it's the user's first login
-                            if (Boolean.TRUE.equals(isFirstLogin)) {
-                                Log.d(TAG, "First login detected. Redirecting to ResetPasswordActivity.");
-                                Intent intent = new Intent(LoginActivity.this, ResetPasswordActivity.class);
-                                intent.putExtra("accountNumber", userSnapshot.getKey());
-                                startActivity(intent);
-                            } else {
-                                Log.d(TAG, "Regular user login successful. Redirecting to HomeActivity.");
-                                Intent intent = new Intent(LoginActivity.this, HomeActivity.class);
-                                intent.putExtra("userId", userSnapshot.getKey());
-                                startActivity(intent);
-                            }
-                            finish();
-                            return;
-                        }
+        auth.signInWithEmailAndPassword(email, password)
+                .addOnCompleteListener(this, task -> {
+                    if (task.isSuccessful()) {
+                        Log.d(TAG, "User login successful.");
+                        checkIfUserNeedsPasswordReset();
+                    } else {
+                        Log.e(TAG, "User login failed: " + task.getException().getMessage());
+                        Toast.makeText(LoginActivity.this, "Authentication failed: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
                     }
-                }
+                });
+    }
 
-                // Invalid email or password
-                Log.d(TAG, "Invalid email or password for regular user.");
-                Toast.makeText(LoginActivity.this, "Invalid email or password", Toast.LENGTH_SHORT).show();
+    private void checkIfUserNeedsPasswordReset() {
+        FirebaseUser currentUser = auth.getCurrentUser();
+        if (currentUser == null) {
+            Log.e(TAG, "No authenticated user found.");
+            Toast.makeText(LoginActivity.this, "Session expired. Please log in again.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String uid = currentUser.getUid();
+        DatabaseReference usersRef = FirebaseDatabase.getInstance().getReference("users").child(uid);
+
+        usersRef.addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                if (snapshot.exists()) {
+                    Boolean isFirstLogin = snapshot.child("isFirstLogin").getValue(Boolean.class);
+                    Log.d(TAG, "isFirstLogin value: " + isFirstLogin);
+                    if (Boolean.TRUE.equals(isFirstLogin)) {
+                        Log.d(TAG, "First login detected. Redirecting to ResetPasswordActivity.");
+                        Intent intent = new Intent(LoginActivity.this, ResetPasswordActivity.class);
+                        startActivity(intent);
+                    } else {
+                        Log.d(TAG, "Regular user login successful. Redirecting to HomeActivity.");
+                        Intent intent = new Intent(LoginActivity.this, MainActivity.class);
+                        startActivity(intent);
+                    }
+                    finish();
+                } else {
+                    Log.e(TAG, "User data not found for UID: " + uid);
+                    Toast.makeText(LoginActivity.this, "User data not found. Please contact support.", Toast.LENGTH_SHORT).show();
+                }
             }
 
             @Override
-            public void onCancelled(@NonNull DatabaseError databaseError) {
-                Log.e(TAG, "User authentication failed: " + databaseError.getMessage());
-                Toast.makeText(LoginActivity.this, "Database error: " + databaseError.getMessage(), Toast.LENGTH_SHORT).show();
+            public void onCancelled(@NonNull DatabaseError error) {
+                Log.e(TAG, "Error checking user data: " + error.getMessage());
+                Toast.makeText(LoginActivity.this, "Database error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-    /**
-     * Reset user password.
-     */
     private void resetPassword() {
         String email = emailField.getText().toString().trim();
         if (TextUtils.isEmpty(email)) {
